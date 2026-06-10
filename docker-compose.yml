@@ -1,0 +1,32 @@
+# docker-compose.yml — Desenvolvimento local (atalho rápido)
+# Uso: docker compose up --build
+# Equivalente completo: docker compose -f environments/dev/docker-compose.dev.yml up --build
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: task-manager:dev
+    container_name: task-manager-dev
+    ports:
+      - "5000:5000"
+    environment:
+      FLASK_ENV: development
+      SECRET_KEY: dev-only-insecure-key-change-me
+      DATABASE_URI: sqlite:///site.db
+    volumes:
+      - ./app:/app                  # hot-reload: edite e recarregue sem rebuild
+      - db_dev:/app/todo_project
+    restart: unless-stopped
+    networks:
+      - task-net-dev
+
+volumes:
+  db_dev:
+
+networks:
+  task-net-dev:
+    driver: bridge

@@ -1,0 +1,33 @@
+# Ambiente de Homologação (Staging)
+# Uso: docker compose -f environments/staging/docker-compose.staging.yml up -d
+# Variáveis obrigatórias: SECRET_KEY  (via GitHub Secret ou export local)
+version: "3.9"
+
+services:
+  app:
+    image: ${DOCKER_IMAGE:-task-manager}:${IMAGE_TAG:-staging}
+    container_name: task-manager-staging
+    ports:
+      - "5001:5000"
+    environment:
+      FLASK_ENV: staging
+      SECRET_KEY: ${SECRET_KEY}
+      DATABASE_URI: ${DATABASE_URI:-sqlite:///site.db}
+    volumes:
+      - db_staging:/app/todo_project
+    restart: unless-stopped
+    networks:
+      - task-net-staging
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  db_staging:
+
+networks:
+  task-net-staging:
+    driver: bridge

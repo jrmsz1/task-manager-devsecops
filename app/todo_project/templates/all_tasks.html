@@ -1,0 +1,67 @@
+{% extends "layout.html" %}
+
+{% block content %}
+
+<!-- Barra de busca -->
+<form method="GET" action="{{ url_for('all_tasks') }}" class="mb-3">
+    <div class="input-group">
+        <input
+            type="text"
+            name="q"
+            class="form-control"
+            placeholder="Buscar tarefas..."
+            value="{{ search_query }}">
+        <div class="input-group-append">
+            <button class="btn btn-outline-secondary" type="submit">Buscar</button>
+            {% if search_query %}
+            <a href="{{ url_for('all_tasks') }}" class="btn btn-outline-danger">✕ Limpar</a>
+            {% endif %}
+        </div>
+    </div>
+</form>
+
+<!-- Resultado da busca -->
+{% if search_query %}
+<p class="text-muted mb-2">
+    {% if tasks %}
+        {{ tasks|length }} tarefa(s) encontrada(s) para: <strong>{{ search_query }}</strong>
+    {% else %}
+        Nenhuma tarefa encontrada para: <strong>{{ search_query }}</strong>
+    {% endif %}
+</p>
+{% endif %}
+
+<!-- Tabela de tarefas -->
+{% if tasks %}
+<table class="table table-bordered">
+    <thead>
+        <tr class="text-center">
+            <th scope="col">#</th>
+            <th scope="col" style="vertical-align: middle;">Task</th>
+            <th scope="col" style="width: 90px;">Update</th>
+            <th scope="col" style="width: 90px;">Delete</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for task in tasks %}
+        <tr>
+            <th scope="row" class="text-center">{{ loop.index }}</th>
+            <td>{{ task.content }}</td>
+            <td class="text-center">
+                <a href="{{ url_for('update_task', task_id=task.id) }}" class="btn btn-outline-secondary btn-sm">Update</a>
+            </td>
+            <td class="text-center">
+                <a href="{{ url_for('delete_task', task_id=task.id) }}" class="btn btn-outline-danger btn-sm">Delete</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% elif not search_query %}
+<legend>No Tasks to Display</legend>
+<p class="text-muted">
+    Click <a href="{{ url_for('add_task') }}">here</a> to Add Task
+</p>
+{% endif %}
+
+{% endblock %}

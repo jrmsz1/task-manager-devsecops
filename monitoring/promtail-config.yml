@@ -1,0 +1,38 @@
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Logs dos containers task-manager
+  - job_name: task-manager-docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: name
+            values: [task-manager-dev, task-manager-staging, task-manager-prod]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+
+  # Syslog do host (captura logs via logging.handlers.SysLogHandler)
+  - job_name: syslog
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: syslog
+          __path__: /var/log/syslog
+    pipeline_stages:
+      - match:
+          selector: '{job="syslog"}'
+          stages:
+            - regex:
+                expression: '.*task-manager\s+(?P<level>WARNING|ERROR|INFO)\s+(?P<event>AUTH_FAILURE|AUTH_SUCCESS|SECURITY_VIOLATION|TASK_CREATE|TASK_DELETE|USER_REGISTER).*'
+            - labels:
+                level:
+                event:

@@ -1,0 +1,15 @@
+*.pyc
+__pycache__/
+*.egg-info/
+.env
+.env.*
+!.env.example
+*.db
+instance/
+reports/
+*.log
+.DS_Store
+.coverage
+htmlcov/
+dist/
+build/

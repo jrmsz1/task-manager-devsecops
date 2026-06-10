@@ -1,0 +1,38 @@
+# Ambiente de Produção
+# Uso: docker compose -f environments/prod/docker-compose.prod.yml up -d
+# Variáveis obrigatórias: SECRET_KEY, DATABASE_URI  (via GitHub Secret)
+version: "3.9"
+
+services:
+  app:
+    image: ${DOCKER_IMAGE:-task-manager}:${IMAGE_TAG:-latest}
+    container_name: task-manager-prod
+    ports:
+      - "5000:5000"
+    environment:
+      FLASK_ENV: production
+      SECRET_KEY: ${SECRET_KEY}
+      DATABASE_URI: ${DATABASE_URI}
+    volumes:
+      - db_prod:/app/todo_project
+    restart: always
+    networks:
+      - task-net-prod
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+volumes:
+  db_prod:
+
+networks:
+  task-net-prod:
+    driver: bridge

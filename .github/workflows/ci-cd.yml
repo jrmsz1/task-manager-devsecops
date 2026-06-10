@@ -1,0 +1,333 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Pipeline DevSecOps — Task Manager Flask
+#
+#  Fluxo de branches:
+#    dev  ──push──►  CI + Build(:dev)
+#    staging  ──push──►  CI + Build(:staging) + Deploy Staging + DAST (ZAP)
+#    main  ──push──►  CI + Build(:latest) + Aprovação manual + Deploy Prod
+#
+#  Secrets necessários (Settings › Secrets and variables › Actions):
+#    DOCKERHUB_USERNAME   usuário Docker Hub
+#    DOCKERHUB_TOKEN      token de acesso Docker Hub
+#    SECRET_KEY           chave Flask (staging e prod)
+#    DATABASE_URI         URI do banco (prod)  — ex: sqlite:///site.db
+#    STAGING_HOST         IP/DNS do servidor staging
+#    STAGING_SSH_KEY      chave SSH privada para o servidor staging
+#    PROD_HOST            IP/DNS do servidor produção
+#    PROD_SSH_KEY         chave SSH privada para o servidor produção
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [dev, staging, main]
+  pull_request:
+    branches: [staging, main]
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/task-manager
+
+# ───────────────────────────────────────────────────────────────────────────
+# JOB 1 — CI: Testes + SAST (roda em todas as branches)
+# ───────────────────────────────────────────────────────────────────────────
+jobs:
+  ci:
+    name: "CI — Testes & Análise Estática (SAST)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependências de dev
+        run: pip install -r app/requirements-dev.txt
+
+      # ── Testes automatizados ──────────────────────────────────────────
+      - name: Testes unitários e de integração
+        run: |
+          mkdir -p reports
+          pytest tests/ -v \
+            --cov=app/todo_project \
+            --cov-report=xml:reports/coverage.xml \
+            --cov-report=term-missing \
+            --junitxml=reports/junit.xml
+
+      - name: Upload — relatório de testes
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: reports/
+
+      # ── SAST: Bandit ──────────────────────────────────────────────────
+      - name: SAST — Bandit (análise de código Python)
+        run: |
+          mkdir -p reports
+          # -ll = medium+ severity | -ii = medium+ confidence
+          bandit -r app/ -f json -o reports/bandit-report.json -ll -ii || true
+          # Exibe no log do pipeline
+          bandit -r app/ -f txt -ll -ii || true
+
+      - name: Upload — relatório Bandit
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: reports/bandit-report.json
+
+      # ── SAST: OWASP Dependency-Check ──────────────────────────────────
+      - name: SAST — OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: "task-manager"
+          path: "app/"
+          format: "HTML"
+          out: "reports/dependency-check"
+          args: >
+            --enableRetired
+            --failOnCVSS 7
+
+      - name: Upload — Dependency-Check
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-check-report
+          path: reports/dependency-check/
+
+# ───────────────────────────────────────────────────────────────────────────
+# JOB 2 — Build: imagem Docker + Docker Slim
+# ───────────────────────────────────────────────────────────────────────────
+  build:
+    name: "Build — Docker Image + Docker Slim"
+    runs-on: ubuntu-latest
+    needs: ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Define tag da imagem conforme a branch
+      - name: Definir tag por ambiente
+        id: tag
+        run: |
+          case "$GITHUB_REF_NAME" in
+            main)    echo "tag=latest"  >> $GITHUB_OUTPUT ;;
+            staging) echo "tag=staging" >> $GITHUB_OUTPUT ;;
+            *)       echo "tag=dev"     >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login Docker Hub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Build e push da imagem base
+      - name: Build & Push imagem base
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          dockerfile: Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Docker Slim — reduz tamanho e surface de ataque (apenas staging e prod)
+      - name: Docker Slim — otimizar imagem
+        if: github.event_name == 'push' && github.ref_name != 'dev'
+        run: |
+          curl -sL https://raw.githubusercontent.com/slimtoolkit/slim/master/scripts/install-slim.sh \
+            | sudo bash
+
+          BASE_TAG="${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
+          SLIM_TAG="${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}-slim"
+
+          slim build \
+            --target "$BASE_TAG" \
+            --tag "$SLIM_TAG" \
+            --http-probe=true \
+            --http-probe-cmd "GET /health" \
+            --continue-after 20 \
+            --publish-port 5000
+
+          docker push "$SLIM_TAG"
+          echo "Imagem Slim: $SLIM_TAG"
+
+# ───────────────────────────────────────────────────────────────────────────
+# JOB 3 — Deploy Staging + DAST com OWASP ZAP (apenas branch staging)
+# ───────────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: "Deploy → Staging + DAST"
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref_name == 'staging' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: http://${{ secrets.STAGING_HOST }}:5001
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Deploy via SSH no servidor de staging
+      - name: Deploy no servidor de staging
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ubuntu
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            export DOCKER_IMAGE=${{ env.IMAGE_NAME }}
+            export IMAGE_TAG=staging
+            export SECRET_KEY="${{ secrets.SECRET_KEY }}"
+            export DATABASE_URI="${{ secrets.DATABASE_URI || 'sqlite:///site.db' }}"
+
+            # Garante que o compose file está disponível
+            if [ ! -f environments/staging/docker-compose.staging.yml ]; then
+              git clone https://github.com/${{ github.repository }} repo
+              cd repo
+            fi
+
+            docker compose \
+              -f environments/staging/docker-compose.staging.yml \
+              pull app
+
+            docker compose \
+              -f environments/staging/docker-compose.staging.yml \
+              up -d --remove-orphans
+
+            echo "Deploy staging OK: $(date)"
+
+      - name: Aguardar aplicação inicializar
+        run: sleep 25
+
+      # DAST: OWASP ZAP Baseline (rápido, identifica problemas óbvios)
+      - name: DAST — OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.11.0
+        with:
+          target: "http://${{ secrets.STAGING_HOST }}:5001"
+          rules_file_name: ".github/zap-rules.tsv"
+          cmd_options: "-a -j"
+          fail_action: false           # não quebra o pipeline, gera relatório
+
+      # DAST: ZAP Full Scan (mais abrangente)
+      - name: DAST — OWASP ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: "http://${{ secrets.STAGING_HOST }}:5001"
+          rules_file_name: ".github/zap-rules.tsv"
+          fail_action: false
+          cmd_options: "-a"
+
+      - name: Upload — relatório ZAP
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-dast-report
+          path: report_html.html
+
+# ───────────────────────────────────────────────────────────────────────────
+# JOB 4 — Aprovação manual + Deploy Produção (apenas branch main)
+# ───────────────────────────────────────────────────────────────────────────
+  deploy-prod:
+    name: "Deploy → Produção (aprovação manual)"
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref_name == 'main' && github.event_name == 'push'
+    environment:
+      name: production              # configure "Required reviewers" neste Environment
+      url: http://${{ secrets.PROD_HOST }}:5000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # O job fica em "Waiting" até um revisor aprovar em:
+      # Actions > workflow run > Review deployments
+      - name: Deploy no servidor de produção
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ubuntu
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            export DOCKER_IMAGE=${{ env.IMAGE_NAME }}
+            export IMAGE_TAG=latest
+            export SECRET_KEY="${{ secrets.SECRET_KEY }}"
+            export DATABASE_URI="${{ secrets.DATABASE_URI }}"
+
+            docker compose \
+              -f environments/prod/docker-compose.prod.yml \
+              pull app
+
+            docker compose \
+              -f environments/prod/docker-compose.prod.yml \
+              up -d --remove-orphans
+
+            # Verifica health após deploy
+            sleep 15
+            curl -sf http://localhost:5000/health \
+              && echo "Health check OK: $(date)" \
+              || (echo "ERRO: health check falhou!" && exit 1)
+
+# ───────────────────────────────────────────────────────────────────────────
+# JOB 5 — Monitoramento pós-deploy (após produção)
+# ───────────────────────────────────────────────────────────────────────────
+  monitoring:
+    name: "Monitoramento — verificação pós-deploy"
+    runs-on: ubuntu-latest
+    needs: deploy-prod
+    if: always() && github.ref_name == 'main'
+
+    steps:
+      - name: Health check externo (3 tentativas)
+        run: |
+          for i in 1 2 3; do
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+              "http://${{ secrets.PROD_HOST }}:5000/health" || echo "000")
+            echo "Tentativa $i → HTTP $HTTP"
+            [ "$HTTP" = "200" ] && exit 0
+            sleep 15
+          done
+          echo "ALERTA: aplicação não respondeu após deploy em produção!"
+          exit 1
+
+      - name: Verificar logs de erros e AUTH_FAILURE no container
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ubuntu
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            echo "=== Últimas 50 linhas de log ==="
+            docker logs task-manager-prod --tail=50 2>&1
+
+            echo "=== Erros/Exceptions ==="
+            docker logs task-manager-prod 2>&1 \
+              | grep -iE "error|exception|critical" | tail -10 \
+              || echo "Nenhum erro crítico."
+
+            echo "=== Tentativas de login falhas ==="
+            docker logs task-manager-prod 2>&1 \
+              | grep "AUTH_FAILURE" | tail -20 \
+              || echo "Nenhuma falha de autenticação recente."
+
+            echo "=== Violações de segurança ==="
+            docker logs task-manager-prod 2>&1 \
+              | grep "SECURITY_VIOLATION" | tail -10 \
+              || echo "Nenhuma violação de segurança recente."
