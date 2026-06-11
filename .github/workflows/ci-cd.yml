@@ -157,12 +157,11 @@ jobs:
 
           BASE_TAG="${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
           SLIM_TAG="${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}-slim"
-          
+            
           slim build \
             --target "$BASE_TAG" \
             --tag "$SLIM_TAG" \
             --http-probe=true \
-            --http-probe-cmd '{"commands":[{"protocol":"http","method":"GET","resource":"/health"}]}' \
             --continue-after 20 \
             --publish-port 5000
 
