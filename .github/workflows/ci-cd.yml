@@ -205,16 +205,17 @@ jobs:
       - name: Aguardar aplicação inicializar
         run: sleep 25
 
-      # DAST: OWASP ZAP Baseline (Alvo alterado para localhost do pipeline)
+      # DAST: OWASP ZAP Baseline
       - name: DAST — OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.11.0
         with:
           target: "http://localhost:5001"
           rules_file_name: ".github/zap-rules.tsv"
           cmd_options: "-a -j"
-          fail_action: false           # não quebra o pipeline, gera relatório
+          fail_action: false
+          artifact_name: ''           # <── FORÇA O ZAP A NÃO FAZER O UPLOAD DEFEITUOSO
 
-      # DAST: ZAP Full Scan (Alvo alterado para localhost do pipeline)
+      # DAST: ZAP Full Scan
       - name: DAST — OWASP ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.10.0
         with:
@@ -222,6 +223,7 @@ jobs:
           rules_file_name: ".github/zap-rules.tsv"
           fail_action: false
           cmd_options: "-a"
+          artifact_name: ''           # <── FORÇA O ZAP A NÃO FAZER O UPLOAD DEFEITUOSO
 
       - name: Upload — relatório ZAP
         uses: actions/upload-artifact@v4
