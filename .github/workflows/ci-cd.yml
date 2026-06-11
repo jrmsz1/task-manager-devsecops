@@ -27,7 +27,8 @@ on:
 
 env:
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/task-manager
-
+  STAGING_HOST_URL: "127.0.0.1:5001" # Coloque o IP real de staging se tiver, ou deixe um mock
+  PROD_HOST_URL: "127.0.0.1:5000"    # Coloque o IP real de prod se tiver, ou deixe um mock
 # ───────────────────────────────────────────────────────────────────────────
 # JOB 1 — CI: Testes + SAST (roda em todas as branches)
 # ───────────────────────────────────────────────────────────────────────────
@@ -178,7 +179,7 @@ jobs:
     if: github.ref_name == 'staging' && github.event_name == 'push'
     environment:
       name: staging
-      url: http://${{ secrets.STAGING_HOST }}:5001
+      url: http://${{ env.STAGING_HOST_URL }}
 
     steps:
       - name: Checkout
@@ -251,7 +252,7 @@ jobs:
     if: github.ref_name == 'main' && github.event_name == 'push'
     environment:
       name: production              # configure "Required reviewers" neste Environment
-      url: http://${{ secrets.PROD_HOST }}:5000
+      url: http://${{ env.PROD_HOST_URL }}
 
     steps:
       - name: Checkout
