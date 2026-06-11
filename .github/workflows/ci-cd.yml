@@ -71,10 +71,21 @@ jobs:
       - name: SAST — Bandit (análise de código Python)
         run: |
           mkdir -p reports
-          # Removemos o -ll -ii para gerar o json padrão mesmo com 0 vulnerabilidades
-          bandit -r app/ -f json -o reports/bandit-report.json || true
-          # Exibe no log do pipeline
-          bandit -r app/ -f txt || true
+          
+          # Debug: Mostra no log do pipeline a estrutura para termos certeza de onde está o código
+          echo "=== Debug: Estrutura do Workspace ==="
+          ls -R
+          
+          # Executa o Bandit na raiz se o app/ estiver vazio, ou mantém no app/ adicionando fallback
+          bandit -r app/ -f json -o reports/bandit-report.json || bandit -r . -f json -o reports/bandit-report.json || true
+          
+          # Garante fisicamente a existência do arquivo para o upload-artifact não falhar silenciosamente
+          if [ ! -f reports/bandit-report.json ]; then
+            echo '{"error": "Nenhum arquivo Python elegível foi encontrado para análise."}' > reports/bandit-report.json
+          fi
+          
+          # Exibe no log do pipeline em texto limpo
+          bandit -r app/ -f txt || bandit -r . -f txt || true
 
       - name: Upload — relatório Bandit
         uses: actions/upload-artifact@v4
@@ -213,7 +224,7 @@ jobs:
           rules_file_name: ".github/zap-rules.tsv"
           cmd_options: "-a -j"
           fail_action: false
-          artifact_name: ''           # <── FORÇA O ZAP A NÃO FAZER O UPLOAD DEFEITUOSO
+          export_report: false         # <── DESATIVA COMPLETAMENTE O UPLOAD INTERNO E DEFEITUOSO
 
       # DAST: ZAP Full Scan
       - name: DAST — OWASP ZAP Full Scan
@@ -223,7 +234,7 @@ jobs:
           rules_file_name: ".github/zap-rules.tsv"
           fail_action: false
           cmd_options: "-a"
-          artifact_name: ''           # <── FORÇA O ZAP A NÃO FAZER O UPLOAD DEFEITUOSO
+          export_report: false         # <── DESATIVA COMPLETAMENTE O UPLOAD INTERNO E DEFEITUOSO            
 
       - name: Upload — relatório ZAP
         uses: actions/upload-artifact@v4
