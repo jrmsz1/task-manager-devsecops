@@ -67,14 +67,14 @@ jobs:
           name: test-reports
           path: reports/
 
-      # ── SAST: Bandit ──────────────────────────────────────────────────
+     # ── SAST: Bandit ──────────────────────────────────────────────────
       - name: SAST — Bandit (análise de código Python)
         run: |
           mkdir -p reports
-          # -ll = medium+ severity | -ii = medium+ confidence
-          bandit -r app/ -f json -o reports/bandit-report.json -ll -ii || true
+          # Removemos o -ll -ii para gerar o json padrão mesmo com 0 vulnerabilidades
+          bandit -r app/ -f json -o reports/bandit-report.json || true
           # Exibe no log do pipeline
-          bandit -r app/ -f txt -ll -ii || true
+          bandit -r app/ -f txt || true
 
       - name: Upload — relatório Bandit
         uses: actions/upload-artifact@v4
