@@ -176,6 +176,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     if: github.ref_name == 'staging' && github.event_name == 'push'
+    # a Action do OWASP ZAP terá a autorização necessária para criar a Issue automaticamente no seu repositório com o relatório dos alertas
+    permissions:
+      contents: read
+      issues: write
     environment:
       name: staging
       url: http://${{ env.STAGING_HOST_URL }}
